@@ -1,0 +1,112 @@
+# =============================================================================
+# KNIGHT v1 — Brain Neuroimmune Cell-State Foundation Model
+# Default configuration
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Data
+# ---------------------------------------------------------------------------
+data:
+  paths:
+    data_dir: "data"
+    raw_dir: "data/raw"
+    processed_dir: "data/processed"
+    splits_dir: "data/splits"
+
+  sources:
+    sea_ad:
+      name: "SEA-AD"
+      description: "Seattle Alzheimer's Disease Brain Cell Atlas"
+      url: "https://portal.brain-map.org/explore/seattle-alzheimers-disease"
+    allen_brain:
+      name: "Allen Brain Map"
+      description: "Allen Institute human brain cell atlas"
+      url: "https://portal.brain-map.org"
+    geo_datasets:
+      - id: "GSE183740"
+        description: "Human microglia single-cell RNA-seq (AD vs control)"
+      - id: "GSE174367"
+        description: "Single-nucleus transcriptomics of AD prefrontal cortex"
+      - id: "GSE160936"
+        description: "Microglia states across neurodegenerative diseases"
+
+  preprocessing:
+    min_genes: 200          # Minimum genes expressed per cell
+    min_cells: 3            # Minimum cells expressing a gene
+    max_mito_pct: 20        # Maximum mitochondrial gene percentage
+    n_hvg: 4000             # Number of highly variable genes to retain
+    target_sum: 10000       # Target count depth for normalisation
+
+# ---------------------------------------------------------------------------
+# Model
+# ---------------------------------------------------------------------------
+model:
+  backbone:
+    type: "scgpt"
+    pretrained_path: "models/scgpt/scGPT_human.pt"
+    n_genes: 4000
+    d_model: 512
+    n_layers: 12
+    n_heads: 8
+    dropout: 0.1
+
+  # Lightweight distilled variant for inference on smaller hardware
+  knight_min:
+    d_model: 256
+    n_layers: 6
+    n_heads: 4
+    n_genes: 4000
+
+  heads:
+    cellstate:
+      n_classes: 40         # Total cell-state classes in ontology
+    perturbation:
+      n_genes: 4000         # Output dimension for perturbation prediction
+
+# ---------------------------------------------------------------------------
+# Training
+# ---------------------------------------------------------------------------
+training:
+  pretraining:
+    epochs: 50
+    batch_size: 128
+    lr: 1.0e-4
+    warmup_steps: 2000
+    weight_decay: 0.01
+    mask_ratio: 0.15
+    max_grad_norm: 1.0
+
+  finetuning:
+    epochs: 30
+    batch_size: 64
+    lr: 5.0e-5
+    patience: 10            # Early-stopping patience (epochs)
+
+  optimizer: "adamw"
+  scheduler: "cosine_warmup"
+  fp16: true
+  gradient_accumulation_steps: 4
+
+# ---------------------------------------------------------------------------
+# Evaluation
+# ---------------------------------------------------------------------------
+evaluation:
+  cellstate_balanced_accuracy_target: 0.90
+  batch_effect_residual_target: 0.10
+  perturbation_pearson_target: 0.60
+  held_out_dataset_fraction: 0.15
+
+# ---------------------------------------------------------------------------
+# Weights & Biases
+# ---------------------------------------------------------------------------
+wandb:
+  project: "knight-v1"
+  entity: "syntropi-ai"
+
+# ---------------------------------------------------------------------------
+# Compute
+# ---------------------------------------------------------------------------
+compute:
+  gpus: 8
+  gpu_type: "a100_80gb"
+  num_workers: 8

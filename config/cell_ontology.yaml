@@ -1,0 +1,159 @@
+# =============================================================================
+# KNIGHT v1 — Brain Neuroimmune Cell-State Ontology
+# Taxonomy of cell types and activation / disease-associated states
+# =============================================================================
+#
+# Identifiers follow the Cell Ontology (CL) where available.
+# Marker genes are canonical literature-derived signatures used for label
+# transfer and validation — they are NOT the full gene programmes.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Coarse cell types (7)
+# ---------------------------------------------------------------------------
+coarse_types:
+  microglia:
+    ontology_id: "CL:0000129"
+    description: "Resident brain macrophages of the CNS"
+  astrocyte:
+    ontology_id: "CL:0000127"
+    description: "Star-shaped glial cells supporting neuronal function"
+  oligodendrocyte:
+    ontology_id: "CL:0000128"
+    description: "Myelinating cells of the CNS"
+  OPC:
+    ontology_id: "CL:0002453"
+    description: "Oligodendrocyte precursor cells"
+  neuron:
+    ontology_id: "CL:0000540"
+    description: "Electrically excitable cells of the nervous system"
+  endothelial:
+    ontology_id: "CL:0000115"
+    description: "Cells lining the brain vasculature"
+  pericyte:
+    ontology_id: "CL:0000669"
+    description: "Mural cells associated with brain capillaries"
+
+# ---------------------------------------------------------------------------
+# Microglia states (8)
+# ---------------------------------------------------------------------------
+microglia_states:
+  homeostatic:
+    ontology_id: "CL:0000129"
+    description: "Surveillant, ramified microglia in healthy tissue"
+    markers:
+      - P2RY12
+      - CX3CR1
+      - TMEM119
+
+  DAM_stage1:
+    description: "Disease-associated microglia — early activation stage"
+    markers:
+      - TYROBP
+      - APOE
+      - B2M
+
+  DAM_stage2:
+    description: "Disease-associated microglia — TREM2-dependent late stage"
+    markers:
+      - TREM2
+      - SPP1
+      - ITGAX
+      - LPL
+
+  inflammatory:
+    description: "Pro-inflammatory / NF-kB-driven microglia"
+    markers:
+      - IL1B
+      - TNF
+      - CCL2
+
+  proliferating:
+    description: "Actively dividing microglia"
+    markers:
+      - MKI67
+      - TOP2A
+
+  interferon_responsive:
+    description: "Type-I interferon stimulated microglia"
+    markers:
+      - IFIT1
+      - ISG15
+      - MX1
+
+  phagocytic:
+    description: "Microglia with enhanced phagocytic programme"
+    markers:
+      - CD68
+      - LGALS3
+      - CTSD
+
+  anti_inflammatory:
+    description: "Neuroprotective / tissue-repair microglia"
+    markers:
+      - IGF1
+      - BDNF
+      - CD163
+
+# ---------------------------------------------------------------------------
+# Astrocyte states (4)
+# ---------------------------------------------------------------------------
+astrocyte_states:
+  protoplasmic:
+    description: "Grey-matter astrocytes with bushy morphology"
+    markers:
+      - SLC1A2
+      - GJA1
+      - AQP4
+
+  fibrous:
+    description: "White-matter astrocytes with elongated processes"
+    markers:
+      - GFAP
+      - VIM
+
+  reactive_A1:
+    description: "Neurotoxic reactive astrocytes (complement-driven)"
+    markers:
+      - C3
+      - SERPING1
+      - GBP2
+
+  reactive_A2:
+    description: "Neuroprotective reactive astrocytes"
+    markers:
+      - S100A10
+      - PTX3
+      - SPHK1
+
+# ---------------------------------------------------------------------------
+# Neuron states (4)
+# ---------------------------------------------------------------------------
+neuron_states:
+  excitatory:
+    description: "Glutamatergic excitatory neurons"
+    markers:
+      - SLC17A7
+      - CAMK2A
+      - SATB2
+
+  inhibitory:
+    description: "GABAergic inhibitory interneurons"
+    markers:
+      - GAD1
+      - GAD2
+      - SLC32A1
+
+  cholinergic:
+    description: "Acetylcholine-releasing neurons (basal forebrain)"
+    markers:
+      - CHAT
+      - SLC18A3
+      - ISL1
+
+  dopaminergic:
+    description: "Dopamine-producing neurons"
+    markers:
+      - TH
+      - SLC6A3
+      - NR4A2

@@ -1,0 +1,59 @@
+# Data files (too large for git)
+data/raw/
+data/processed/
+data/splits/
+data/external/
+*.h5ad
+*.h5
+*.loom
+*.zarr/
+*.parquet
+*.feather
+
+# Model artifacts
+models/pretrained/
+models/checkpoints/
+models/exports/
+*.pt
+*.pth
+*.onnx
+*.safetensors
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs and outputs
+*.log
+wandb/
+lightning_logs/
+outputs/
+
+# Secrets
+.env
+*.key
