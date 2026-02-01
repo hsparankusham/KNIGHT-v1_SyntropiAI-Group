@@ -18,17 +18,33 @@ data:
       name: "SEA-AD"
       description: "Seattle Alzheimer's Disease Brain Cell Atlas"
       url: "https://portal.brain-map.org/explore/seattle-alzheimers-disease"
+      cellxgene_collection: "1ca90a2d-2943-483d-b678-b809bf464c30"
     allen_brain:
       name: "Allen Brain Map"
       description: "Allen Institute human brain cell atlas"
       url: "https://portal.brain-map.org"
     geo_datasets:
-      - id: "GSE183740"
-        description: "Human microglia single-cell RNA-seq (AD vs control)"
+      - id: "GSE188236"
+        description: "Mathys 2023 - PFC AD snRNA-seq (MIT/Broad)"
       - id: "GSE174367"
-        description: "Single-nucleus transcriptomics of AD prefrontal cortex"
+        description: "Zhou 2020 - AD multi-region snRNA-seq"
       - id: "GSE160936"
-        description: "Microglia states across neurodegenerative diseases"
+        description: "Leng 2021 - Entorhinal cortex AD"
+      - id: "GSE148822"
+        description: "Grubman 2019 - Entorhinal cortex AD"
+      - id: "GSE157827"
+        description: "Lau 2020 - DLPFC AD"
+      - id: "GSE180759"
+        description: "Sun 2023 - Microglia state dynamics in AD"
+      - id: "GSE202210"
+        description: "Gabitto 2023 - SEA-AD companion"
+      - id: "GSE229481"
+        description: "Green 2023 - ROSMAP multiomics"
+    crispr_datasets:
+      - id: "GSE178317"
+        description: "Drager 2022 - CRISPRi CROP-seq in iPSC-microglia (Kampmann Lab)"
+      - id: "GSE182308"
+        description: "Leng 2022 - CRISPRi CROP-seq in iPSC-astrocytes (Kampmann Lab)"
 
   preprocessing:
     min_genes: 200          # Minimum genes expressed per cell
@@ -43,25 +59,32 @@ data:
 model:
   backbone:
     type: "scgpt"
-    pretrained_path: "models/scgpt/scGPT_human.pt"
-    n_genes: 4000
-    d_model: 512
-    n_layers: 12
-    n_heads: 8
-    dropout: 0.1
+    pretrained_path: "models/scgpt_brain/scGPT_brain/best_model.pt"
+    vocab_path: "models/scgpt_brain/scGPT_brain/vocab.json"
+    n_genes: 60697          # Gene vocabulary size (from scGPT brain checkpoint)
+    d_model: 512            # Must match scGPT: embsize=512
+    n_layers: 12            # Must match scGPT: nlayers=12
+    n_heads: 8              # Must match scGPT: nheads=8
+    d_hid: 512              # Must match scGPT: d_hid=512
+    dropout: 0.2            # Must match scGPT: dropout=0.2
+    n_bins: 51              # Must match scGPT: n_bins=51
+    max_seq_len: 1200       # Must match scGPT: max_seq_len=1200
+    pad_value: -2           # Must match scGPT: pad_value=-2
 
-  # Lightweight distilled variant for inference on smaller hardware
+  # Lightweight distilled variant for prototyping on smaller hardware
   knight_min:
     d_model: 256
     n_layers: 6
     n_heads: 4
-    n_genes: 4000
+    n_genes: 60697          # Same vocab as backbone
+    n_bins: 51
+    max_seq_len: 1200
 
   heads:
     cellstate:
-      n_classes: 40         # Total cell-state classes in ontology
+      n_classes: 23         # Matches cell_ontology.yaml (7 coarse + 8 microglia + 4 astrocyte + 4 neuron)
     perturbation:
-      n_genes: 4000         # Output dimension for perturbation prediction
+      n_genes: 60697        # Predict delta for full gene vocabulary
 
 # ---------------------------------------------------------------------------
 # Training

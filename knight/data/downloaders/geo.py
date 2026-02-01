@@ -124,6 +124,32 @@ GEO_DATASETS: dict[str, dict[str, Any]] = {
         ],
         "n_cells_approx": 2_400_000,
     },
+    # --- CRISPRi / Perturb-seq datasets (for perturbation prediction) ---
+    "drager_2022_microglia_crispri": {
+        "accession": "GSE178317",
+        "description": (
+            "Drager et al. 2022 - CRISPRi CROP-seq screen in iPSC-derived "
+            "microglia targeting 81 genes of the druggable genome (Kampmann Lab)"
+        ),
+        "organism": "Homo sapiens",
+        "cell_types": ["microglia"],
+        "n_cells_approx": 29_000,
+        "perturbation_type": "CRISPRi",
+        "reference": "https://doi.org/10.1038/s41593-022-01131-4",
+    },
+    "leng_2022_astrocyte_crispri": {
+        "accession": "GSE182308",
+        "description": (
+            "Leng et al. 2022 - CRISPRi CROP-seq screen in iPSC-derived "
+            "astrocytes identifying regulators of inflammatory reactive states "
+            "(Kampmann Lab)"
+        ),
+        "organism": "Homo sapiens",
+        "cell_types": ["astrocytes"],
+        "n_cells_approx": 20_000,
+        "perturbation_type": "CRISPRi",
+        "reference": "https://doi.org/10.1038/s41593-022-01180-9",
+    },
 }
 
 # NCBI GEO FTP base

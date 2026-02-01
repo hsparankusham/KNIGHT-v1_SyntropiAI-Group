@@ -26,19 +26,20 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # CellxGene Census collection for SEA-AD (Allen Institute)
-CELLXGENE_COLLECTION_ID = "283d65eb-dd53-496d-adb7-7570c7caa443"
+# Verified at: https://cellxgene.cziscience.com/collections/1ca90a2d-2943-483d-b678-b809bf464c30
+CELLXGENE_COLLECTION_ID = "1ca90a2d-2943-483d-b678-b809bf464c30"
 
 # Direct download URLs from the Allen Institute data portal
-SEA_AD_RESOURCES: dict[str, dict[str, str]] = {
+# NOTE: Checksums are not pre-computed — set to None to skip validation
+# on first download. Real checksums are logged after download for future use.
+SEA_AD_RESOURCES: dict[str, dict[str, Any]] = {
     "scrna_h5ad": {
         "url": (
             "https://sea-ad-single-cell-profiling.s3.amazonaws.com/"
             "MTG/RNAseq/Reference_MTG_RNAseq_final-nuclei.2022-06-07.h5ad"
         ),
         "filename": "sea_ad_scrna.h5ad",
-        "sha256": (
-            "a3c1e4f7b2d95e8c6a0f3d1b7e9c2a5d8f4b6e0c3a7d9f1b5e8c2a4d6f0b3e"
-        ),
+        "sha256": None,  # Computed and logged on first download
         "description": "scRNA-seq expression matrix (MTG, all nuclei)",
     },
     "scatac_fragments": {
@@ -47,9 +48,7 @@ SEA_AD_RESOURCES: dict[str, dict[str, str]] = {
             "MTG/ATACseq/Reference_MTG_ATACseq_final-nuclei.fragments.tsv.gz"
         ),
         "filename": "sea_ad_scatac_fragments.tsv.gz",
-        "sha256": (
-            "b4d2e5f8c3a6d9f1b7e0c2a5d8f4b6e3c0a7d9f1b5e8c2a4d6f0b3e7c1a9d5"
-        ),
+        "sha256": None,
         "description": "scATAC-seq fragment file (MTG)",
     },
     "metadata": {
@@ -58,9 +57,7 @@ SEA_AD_RESOURCES: dict[str, dict[str, str]] = {
             "MTG/RNAseq/Reference_MTG_RNAseq_final-nuclei.2022-06-07.metadata.csv"
         ),
         "filename": "sea_ad_metadata.csv",
-        "sha256": (
-            "c5e3f6a9d2b7e0c4a8d1f5b9e3c7a0d4f8b2e6c1a5d9f3b7e0c4a8d2f6b0e4"
-        ),
+        "sha256": None,
         "description": "Donor and cell-level metadata",
     },
 }
@@ -139,9 +136,8 @@ def _try_cellxgene_census(output_dir: Path) -> bool:
             census,
             organism="Homo sapiens",
             obs_value_filter=(
-                "dataset_id == 'SEA-AD' "
-                "and tissue_general == 'brain' "
-                "and disease == \"Alzheimer's disease\""
+                "collection_id == '1ca90a2d-2943-483d-b678-b809bf464c30' "
+                "and tissue_general == 'brain'"
             ),
         )
         dest = output_dir / "sea_ad_scrna_census.h5ad"
@@ -204,25 +200,27 @@ def download_sea_ad(
         info = SEA_AD_RESOURCES[key]
         dest = output_dir / info["filename"]
 
-        # Skip if already present and checksum matches
+        # Skip if already present (and checksum matches if available)
         if dest.exists() and not force:
-            digest = _sha256_file(dest)
-            if digest == info["sha256"]:
-                logger.info("Skipping %s (checksum OK)", dest.name)
+            if info["sha256"] is not None:
+                digest = _sha256_file(dest)
+                if digest == info["sha256"]:
+                    logger.info("Skipping %s (checksum OK)", dest.name)
+                    downloaded[key] = dest
+                    continue
+                logger.warning(
+                    "Checksum mismatch for %s; re-downloading", dest.name
+                )
+            else:
+                logger.info("Skipping %s (already exists)", dest.name)
                 downloaded[key] = dest
                 continue
-            logger.warning(
-                "Checksum mismatch for %s (expected %s, got %s); re-downloading",
-                dest.name,
-                info["sha256"][:12],
-                digest[:12],
-            )
 
         _download_file(info["url"], dest)
 
-        # Validate checksum
+        # Log checksum for future reference
         digest = _sha256_file(dest)
-        if digest != info["sha256"]:
+        if info["sha256"] is not None and digest != info["sha256"]:
             logger.error(
                 "Checksum validation FAILED for %s (expected %s, got %s)",
                 dest.name,
@@ -230,7 +228,7 @@ def download_sea_ad(
                 digest[:12],
             )
         else:
-            logger.info("Checksum OK for %s", dest.name)
+            logger.info("SHA-256 for %s: %s", dest.name, digest)
 
         downloaded[key] = dest
 
