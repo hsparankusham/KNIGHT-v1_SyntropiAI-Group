@@ -1,0 +1,38 @@
+# =============================================================================
+# KNIGHT v1 — CPU-only compute profile (MacBook local development)
+# =============================================================================
+# Usage: Override defaults.yaml training/compute sections for local dev.
+#   python scripts/training/01_pretrain_knight_min.py --config config/compute_cpu.yaml
+
+training:
+  pretraining:
+    epochs: 5                   # Short runs for debugging
+    batch_size: 8               # CPU-friendly small batch
+    lr: 1.0e-4
+    warmup_steps: 200
+    weight_decay: 0.01
+    mask_ratio: 0.15
+    max_grad_norm: 1.0
+
+  finetuning:
+    epochs: 10
+    batch_size: 8
+    lr: 5.0e-5
+    patience: 5
+
+  optimizer: "adamw"
+  scheduler: "cosine_warmup"
+  fp16: false                   # CPU does not benefit from fp16
+  gradient_accumulation_steps: 8  # Simulate larger effective batch (8 * 8 = 64)
+
+compute:
+  gpus: 0                       # CPU only
+  gpu_type: "none"
+  num_workers: 2                # MacBook Air has limited cores
+  pin_memory: false             # No GPU to pin to
+  device: "cpu"
+
+# Reduce data for quick iteration
+data:
+  preprocessing:
+    n_hvg: 2000                 # Fewer HVGs for faster iteration

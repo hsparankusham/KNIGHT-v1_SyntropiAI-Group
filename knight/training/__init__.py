@@ -12,7 +12,7 @@ from knight.training.schedulers import (
     LinearWarmupScheduler,
     get_scheduler,
 )
-from knight.training.pretrainer import Pretrainer, masked_mse_loss
+from knight.training.pretrainer import Pretrainer, ReconstructionHead
 from knight.training.finetuner import CellStateFinetuner, PerturbationFinetuner
 
 __all__ = [
@@ -28,7 +28,7 @@ __all__ = [
     "get_scheduler",
     # Training
     "Pretrainer",
-    "masked_mse_loss",
+    "ReconstructionHead",
     "CellStateFinetuner",
     "PerturbationFinetuner",
 ]

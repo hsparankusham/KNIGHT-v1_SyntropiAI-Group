@@ -15,7 +15,7 @@ from typing import Any, Optional
 
 import torch
 import torch.nn as nn
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
 
 from knight.training.losses import MaskedMSELoss
@@ -25,33 +25,40 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Standalone helper — also usable outside the class
+# Reconstruction head for pretraining
 # ---------------------------------------------------------------------------
 
-def masked_mse_loss(
-    predicted: torch.Tensor,
-    target: torch.Tensor,
-    mask: torch.Tensor,
-) -> torch.Tensor:
-    """Compute MSE only on masked positions.
+class ReconstructionHead(nn.Module):
+    """Maps cell embeddings back to per-gene expression predictions.
 
-    Parameters
-    ----------
-    predicted : Tensor [B, G]
-        Model output for all genes.
-    target : Tensor [B, G]
-        Ground-truth expression values.
-    mask : Tensor [B, G]
-        Boolean / binary mask — ``1`` where the gene was masked.
-
-    Returns
-    -------
-    Tensor
-        Scalar mean-squared error over masked entries.
+    Used during masked expression pretraining: the encoder produces a cell
+    embedding, and this head projects it back to predict the original
+    expression values for all input genes.
     """
-    mask_f = mask.float()
-    sq_err = (predicted - target) ** 2 * mask_f
-    return sq_err.sum() / mask_f.sum().clamp(min=1.0)
+
+    def __init__(self, d_model: int, max_genes: int) -> None:
+        super().__init__()
+        self.head = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.GELU(),
+            nn.LayerNorm(d_model),
+            nn.Linear(d_model, max_genes),
+        )
+
+    def forward(self, cell_embedding: torch.Tensor) -> torch.Tensor:
+        """Predict expression values from cell embedding.
+
+        Parameters
+        ----------
+        cell_embedding : Tensor [B, D]
+            Cell embeddings from the encoder.
+
+        Returns
+        -------
+        Tensor [B, max_genes]
+            Predicted expression values.
+        """
+        return self.head(cell_embedding)
 
 
 # ---------------------------------------------------------------------------
@@ -61,33 +68,11 @@ def masked_mse_loss(
 class Pretrainer:
     """Self-supervised masked gene-expression pretrainer.
 
-    Parameters
-    ----------
-    model : nn.Module
-        The KNIGHT encoder (or encoder + reconstruction head).
-    train_loader : DataLoader
-        Training dataloader yielding batches of expression tensors.
-    val_loader : DataLoader
-        Validation dataloader.
-    config : dict
-        Training hyper-parameters.  Expected keys:
-
-        * ``lr`` — peak learning rate (default ``1e-4``).
-        * ``weight_decay`` — AdamW weight decay (default ``0.01``).
-        * ``mask_ratio`` — fraction of genes to mask (default ``0.15``).
-        * ``max_grad_norm`` — gradient-clipping threshold (default ``1.0``).
-        * ``fp16`` — whether to use mixed precision (default ``True``).
-        * ``scheduler`` — scheduler name (default ``"cosine_warmup"``).
-        * ``warmup_steps`` — warmup steps for the scheduler.
-        * ``total_steps`` — total training steps.
-        * ``min_lr`` — minimum LR for cosine decay (default ``1e-7``).
-        * ``patience`` — early-stopping patience in epochs (default ``5``).
-        * ``checkpoint_dir`` — directory for saving checkpoints.
-        * ``use_wandb`` — enable Weights & Biases logging (default ``False``).
-        * ``wandb_project`` — W&B project name.
-        * ``wandb_run_name`` — W&B run name.
-    device : torch.device | str
-        Device to train on.
+    Works with dict-based batches from CellExpressionDataset, which yield:
+    - gene_ids: (B, max_genes) int64
+    - expression_values: (B, max_genes) float32
+    - padding_mask: (B, max_genes) bool
+    - n_genes: (B,) int64
     """
 
     def __init__(
@@ -104,12 +89,12 @@ class Pretrainer:
         self.config = config
         self.device = torch.device(device)
 
-        # Hyper-parameters with sensible defaults
+        # Hyper-parameters
         self.lr: float = config.get("lr", 1e-4)
         self.weight_decay: float = config.get("weight_decay", 0.01)
         self.mask_ratio: float = config.get("mask_ratio", 0.15)
         self.max_grad_norm: float = config.get("max_grad_norm", 1.0)
-        self.fp16: bool = config.get("fp16", True)
+        self.fp16: bool = config.get("fp16", True) and self.device.type == "cuda"
         self.patience: int = config.get("patience", 5)
         self.checkpoint_dir = Path(config.get("checkpoint_dir", "checkpoints"))
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -124,12 +109,22 @@ class Pretrainer:
             weight_decay=self.weight_decay,
         )
 
+        # Compute total_steps for scheduler
+        n_epochs = config.get("epochs", 50)
+        steps_per_epoch = len(train_loader)
+        total_steps = n_epochs * steps_per_epoch
+        scheduler_config = {
+            **config,
+            "total_steps": total_steps,
+            "warmup_steps": config.get("warmup_steps", min(2000, total_steps // 10)),
+        }
+
         # Scheduler
         scheduler_name: str = config.get("scheduler", "cosine_warmup")
-        self.scheduler = get_scheduler(scheduler_name, self.optimizer, config)
+        self.scheduler = get_scheduler(scheduler_name, self.optimizer, scheduler_config)
 
         # Mixed-precision scaler
-        self.scaler = GradScaler(enabled=self.fp16)
+        self.scaler = GradScaler("cuda", enabled=self.fp16)
 
         # Tracking
         self.global_step: int = 0
@@ -140,7 +135,7 @@ class Pretrainer:
         self.use_wandb: bool = config.get("use_wandb", False)
         if self.use_wandb:
             try:
-                import wandb  # noqa: F811
+                import wandb
 
                 if wandb.run is None:
                     wandb.init(
@@ -154,59 +149,69 @@ class Pretrainer:
                 self.use_wandb = False
 
         logger.info(
-            "Pretrainer initialised  lr=%.2e  mask_ratio=%.2f  fp16=%s  device=%s",
+            "Pretrainer initialised  lr=%.2e  mask_ratio=%.2f  fp16=%s  device=%s  "
+            "total_steps=%d  warmup_steps=%d",
             self.lr,
             self.mask_ratio,
             self.fp16,
             self.device,
+            total_steps,
+            scheduler_config["warmup_steps"],
         )
 
     # ------------------------------------------------------------------
-    # Masking utility
+    # Batch handling
     # ------------------------------------------------------------------
 
-    def _generate_mask(self, batch: torch.Tensor) -> torch.Tensor:
-        """Create a random binary mask with ``self.mask_ratio`` fraction of genes set to 1."""
-        return (torch.rand_like(batch) < self.mask_ratio).float()
+    def _move_batch(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """Move all tensors in a batch dict to the training device."""
+        return {k: v.to(self.device) for k, v in batch.items()}
+
+    def _mask_expression(
+        self, batch: dict[str, torch.Tensor]
+    ) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
+        """Mask expression values in a batch for reconstruction.
+
+        Returns the modified batch (with masked expression values),
+        the original target values, and the binary mask.
+        """
+        expr = batch["expression_values"]  # (B, max_genes)
+        padding = batch["padding_mask"]  # (B, max_genes) True=padding
+
+        # Only mask non-padding positions
+        rand = torch.rand_like(expr)
+        mask = (rand < self.mask_ratio) & (~padding)  # (B, max_genes)
+
+        # Zero out masked expression values
+        masked_expr = expr.clone()
+        masked_expr[mask] = 0.0
+
+        masked_batch = {**batch, "expression_values": masked_expr}
+        return masked_batch, expr, mask.float()
 
     # ------------------------------------------------------------------
     # Single training epoch
     # ------------------------------------------------------------------
 
     def train_epoch(self) -> dict[str, float]:
-        """Run one training epoch.
-
-        Returns
-        -------
-        dict
-            ``"train_loss"`` averaged over the epoch.
-        """
+        """Run one training epoch."""
         self.model.train()
         total_loss = 0.0
         n_batches = 0
 
         for batch in self.train_loader:
-            if isinstance(batch, (list, tuple)):
-                expr = batch[0].to(self.device)
-            else:
-                expr = batch.to(self.device)
-
-            # Mask random genes
-            mask = self._generate_mask(expr)
-            masked_input = expr * (1.0 - mask)  # zero out masked positions
+            batch = self._move_batch(batch)
+            masked_batch, target_expr, mask = self._mask_expression(batch)
 
             self.optimizer.zero_grad(set_to_none=True)
 
-            with autocast(enabled=self.fp16):
-                predicted = self.model(masked_input)
-                loss = self.criterion(predicted, expr, mask)
+            with autocast("cuda", enabled=self.fp16):
+                predicted = self.model(masked_batch)
+                loss = self.criterion(predicted, target_expr, mask)
 
             self.scaler.scale(loss).backward()
-
-            # Gradient clipping (unscale first for correct norm)
             self.scaler.unscale_(self.optimizer)
             nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
-
             self.scaler.step(self.optimizer)
             self.scaler.update()
             self.scheduler.step()
@@ -215,7 +220,6 @@ class Pretrainer:
             n_batches += 1
             self.global_step += 1
 
-            # Per-step W&B logging
             if self.use_wandb and self.global_step % 50 == 0:
                 import wandb
 
@@ -237,13 +241,7 @@ class Pretrainer:
 
     @torch.no_grad()
     def validate(self) -> dict[str, float]:
-        """Evaluate on the validation set.
-
-        Returns
-        -------
-        dict
-            ``"val_loss"`` and ``"val_r2"`` (R-squared on masked positions).
-        """
+        """Evaluate on the validation set."""
         self.model.eval()
         total_loss = 0.0
         ss_res = 0.0
@@ -251,24 +249,19 @@ class Pretrainer:
         n_batches = 0
 
         for batch in self.val_loader:
-            if isinstance(batch, (list, tuple)):
-                expr = batch[0].to(self.device)
-            else:
-                expr = batch.to(self.device)
+            batch = self._move_batch(batch)
+            masked_batch, target_expr, mask = self._mask_expression(batch)
 
-            mask = self._generate_mask(expr)
-            masked_input = expr * (1.0 - mask)
-
-            with autocast(enabled=self.fp16):
-                predicted = self.model(masked_input)
-                loss = self.criterion(predicted, expr, mask)
+            with autocast("cuda", enabled=self.fp16):
+                predicted = self.model(masked_batch)
+                loss = self.criterion(predicted, target_expr, mask)
 
             total_loss += loss.item()
 
-            # Reconstruction R² on masked positions only
+            # R² on masked positions
             mask_bool = mask.bool()
             pred_masked = predicted[mask_bool]
-            true_masked = expr[mask_bool]
+            true_masked = target_expr[mask_bool]
             ss_res += ((pred_masked - true_masked) ** 2).sum().item()
             ss_tot += ((true_masked - true_masked.mean()) ** 2).sum().item()
             n_batches += 1
@@ -283,18 +276,7 @@ class Pretrainer:
     # ------------------------------------------------------------------
 
     def train(self, n_epochs: int) -> dict[str, list[float]]:
-        """Run the full pretraining loop.
-
-        Parameters
-        ----------
-        n_epochs : int
-            Maximum number of epochs.
-
-        Returns
-        -------
-        dict
-            History with keys ``"train_loss"``, ``"val_loss"``, ``"val_r2"``.
-        """
+        """Run the full pretraining loop."""
         history: dict[str, list[float]] = {
             "train_loss": [],
             "val_loss": [],
@@ -327,7 +309,6 @@ class Pretrainer:
                 elapsed,
             )
 
-            # W&B epoch-level logging
             if self.use_wandb:
                 import wandb
 
@@ -342,7 +323,6 @@ class Pretrainer:
                     step=self.global_step,
                 )
 
-            # Checkpoint & early stopping
             if val_metrics["val_loss"] < self.best_val_loss:
                 self.best_val_loss = val_metrics["val_loss"]
                 self.epochs_without_improvement = 0
