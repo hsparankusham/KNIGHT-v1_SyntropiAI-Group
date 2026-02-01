@@ -20,7 +20,7 @@ from typing import Any, Optional
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
 
 from knight.training.losses import CombinedPerturbationLoss, FocalLoss
@@ -86,7 +86,7 @@ class CellStateFinetuner:
         self.lr: float = config.get("lr", 5e-5)
         self.weight_decay: float = config.get("weight_decay", 0.01)
         self.max_grad_norm: float = config.get("max_grad_norm", 1.0)
-        self.fp16: bool = config.get("fp16", True)
+        self.fp16: bool = config.get("fp16", True) and self.device.type == "cuda"
         self.num_classes: int = config["num_classes"]
         self.freeze_encoder_epochs: int = config.get("freeze_encoder_epochs", 0)
         self.patience: int = config.get("patience", 5)
@@ -109,12 +109,22 @@ class CellStateFinetuner:
             weight_decay=self.weight_decay,
         )
 
+        # Compute total_steps for scheduler
+        n_epochs = config.get("epochs", 30)
+        steps_per_epoch = len(train_loader)
+        total_steps = n_epochs * steps_per_epoch
+        scheduler_config = {
+            **config,
+            "total_steps": total_steps,
+            "warmup_steps": config.get("warmup_steps", min(500, total_steps // 10)),
+        }
+
         # Scheduler
         scheduler_name: str = config.get("scheduler", "cosine_warmup")
-        self.scheduler = get_scheduler(scheduler_name, self.optimizer, config)
+        self.scheduler = get_scheduler(scheduler_name, self.optimizer, scheduler_config)
 
         # Mixed precision
-        self.scaler = GradScaler(enabled=self.fp16)
+        self.scaler = GradScaler("cuda", enabled=self.fp16)
 
         # Tracking
         self.global_step: int = 0
@@ -177,6 +187,11 @@ class CellStateFinetuner:
     # Training epoch
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _move_batch(batch: dict[str, torch.Tensor], device: torch.device) -> dict[str, torch.Tensor]:
+        """Move all tensors in a batch dict to the target device."""
+        return {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+
     def train_epoch(self) -> dict[str, float]:
         """Run one training epoch with cross-entropy / focal loss.
 
@@ -189,14 +204,14 @@ class CellStateFinetuner:
         total_loss = 0.0
         n_batches = 0
 
-        for expr, labels in self.train_loader:
-            expr = expr.to(self.device)
-            labels = labels.to(self.device)
+        for batch in self.train_loader:
+            batch = self._move_batch(batch, self.device)
+            labels = batch["label"]
 
             self.optimizer.zero_grad(set_to_none=True)
 
-            with autocast(enabled=self.fp16):
-                logits = self.model(expr)
+            with autocast("cuda", enabled=self.fp16):
+                logits = self.model(batch, task="cellstate")
                 loss = self.criterion(logits, labels)
 
             self.scaler.scale(loss).backward()
@@ -232,12 +247,12 @@ class CellStateFinetuner:
         all_preds: list[torch.Tensor] = []
         all_labels: list[torch.Tensor] = []
 
-        for expr, labels in self.val_loader:
-            expr = expr.to(self.device)
-            labels = labels.to(self.device)
+        for batch in self.val_loader:
+            batch = self._move_batch(batch, self.device)
+            labels = batch["label"]
 
-            with autocast(enabled=self.fp16):
-                logits = self.model(expr)
+            with autocast("cuda", enabled=self.fp16):
+                logits = self.model(batch, task="cellstate")
                 loss = self.criterion(logits, labels)
 
             total_loss += loss.item()
@@ -473,7 +488,7 @@ class PerturbationFinetuner:
         self.lr: float = config.get("lr", 5e-5)
         self.weight_decay: float = config.get("weight_decay", 0.01)
         self.max_grad_norm: float = config.get("max_grad_norm", 1.0)
-        self.fp16: bool = config.get("fp16", True)
+        self.fp16: bool = config.get("fp16", True) and self.device.type == "cuda"
         self.freeze_encoder_epochs: int = config.get("freeze_encoder_epochs", 0)
         self.patience: int = config.get("patience", 5)
         self.checkpoint_dir = Path(config.get("checkpoint_dir", "checkpoints"))
@@ -489,10 +504,21 @@ class PerturbationFinetuner:
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay,
         )
-        scheduler_name: str = config.get("scheduler", "cosine_warmup")
-        self.scheduler = get_scheduler(scheduler_name, self.optimizer, config)
 
-        self.scaler = GradScaler(enabled=self.fp16)
+        # Compute total_steps for scheduler
+        n_epochs = config.get("epochs", 30)
+        steps_per_epoch = len(train_loader)
+        total_steps = n_epochs * steps_per_epoch
+        scheduler_config = {
+            **config,
+            "total_steps": total_steps,
+            "warmup_steps": config.get("warmup_steps", min(500, total_steps // 10)),
+        }
+
+        scheduler_name: str = config.get("scheduler", "cosine_warmup")
+        self.scheduler = get_scheduler(scheduler_name, self.optimizer, scheduler_config)
+
+        self.scaler = GradScaler("cuda", enabled=self.fp16)
 
         self.global_step: int = 0
         self.best_val_loss: float = float("inf")
@@ -566,7 +592,7 @@ class PerturbationFinetuner:
 
             self.optimizer.zero_grad(set_to_none=True)
 
-            with autocast(enabled=self.fp16):
+            with autocast("cuda", enabled=self.fp16):
                 pred_delta = self.model(expr)
                 loss, components = self.criterion(pred_delta, delta_expr)
 
@@ -618,7 +644,7 @@ class PerturbationFinetuner:
             expr = expr.to(self.device)
             delta_expr = delta_expr.to(self.device)
 
-            with autocast(enabled=self.fp16):
+            with autocast("cuda", enabled=self.fp16):
                 pred_delta = self.model(expr)
                 loss, components = self.criterion(pred_delta, delta_expr)
 
